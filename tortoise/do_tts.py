@@ -35,7 +35,7 @@ if __name__ == '__main__':
             voice_sel = [selected_voice]
         voice_samples, conditioning_latents = load_voices(voice_sel)
 
-        gen, dbg_state = tts.tts_with_preset(args.text, speaking_rate=speaking_rate, k=args.candidates, voice_samples=voice_samples, conditioning_latents=conditioning_latents,
+        gen, dbg_state = tts.tts_with_preset(args.text, speaking_rate=args.speaking_rate, k=args.candidates, voice_samples=voice_samples, conditioning_latents=conditioning_latents,
                                   preset=args.preset, use_deterministic_seed=args.seed, return_deterministic_state=True, cvvp_amount=args.cvvp_amount)
         if isinstance(gen, list):
             for j, g in enumerate(gen):
