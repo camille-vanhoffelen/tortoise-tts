@@ -475,7 +475,9 @@ class TextToSpeech:
                                                 torch.tensor([text_tokens.shape[-1]], device=text_tokens.device), best_results,
                                                 torch.tensor([best_results.shape[-1]*self.autoregressive.mel_length_compression], device=text_tokens.device),
                                                 return_latent=True, clip_inputs=False)
-                del auto_conditioning
+
+                if not return_deterministic_state:
+                    del auto_conditioning
 
             if verbose:
                 print("Transforming autoregressive outputs into audio..")
