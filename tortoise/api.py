@@ -516,7 +516,7 @@ class TextToSpeech:
                 res = wav_candidates[0]
 
             if return_deterministic_state:
-                return res, (deterministic_seed, text, voice_samples, conditioning_latents)
+                return res, (deterministic_seed, text, voice_samples, (auto_conditioning.cpu(), diffusion_conditioning.cpu()))
             else:
                 return res
     def deterministic_state(self, seed=None):
