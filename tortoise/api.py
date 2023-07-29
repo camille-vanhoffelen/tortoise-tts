@@ -227,24 +227,24 @@ class TextToSpeech:
             self.autoregressive = UnifiedVoice(max_mel_tokens=604, max_text_tokens=402, max_conditioning_inputs=2, layers=30,
                                           model_dim=1024,
                                           heads=16, number_text_tokens=255, start_text_token=255, checkpointing=False,
-                                          train_solo_embeddings=False).cpu().eval()
+                                          train_solo_embeddings=False).eval()
             self.autoregressive.load_state_dict(torch.load(get_model_path('autoregressive.pth', models_dir)))
             self.autoregressive.post_init_gpt2_config(use_deepspeed=use_deepspeed, kv_cache=kv_cache, half=self.half)
             
             self.diffusion = DiffusionTts(model_channels=1024, num_layers=10, in_channels=100, out_channels=200,
                                           in_latent_channels=1024, in_tokens=8193, dropout=0, use_fp16=False, num_heads=16,
-                                          layer_drop=0, unconditioned_percentage=0).cpu().eval()
+                                          layer_drop=0, unconditioned_percentage=0).eval()
             self.diffusion.load_state_dict(torch.load(get_model_path('diffusion_decoder.pth', models_dir)))
 
         self.clvp = CLVP(dim_text=768, dim_speech=768, dim_latent=768, num_text_tokens=256, text_enc_depth=20,
                          text_seq_len=350, text_heads=12,
                          num_speech_tokens=8192, speech_enc_depth=20, speech_heads=12, speech_seq_len=430,
-                         use_xformers=True).cpu().eval()
+                         use_xformers=True).eval()
         self.clvp.load_state_dict(torch.load(get_model_path('clvp2.pth', models_dir)))
         self.cvvp = None # CVVP model is only loaded if used.
 
-        self.vocoder = UnivNetGenerator().cpu()
-        self.vocoder.load_state_dict(torch.load(get_model_path('vocoder.pth', models_dir), map_location=torch.device('cpu'))['model_g'])
+        self.vocoder = UnivNetGenerator()
+        self.vocoder.load_state_dict(torch.load(get_model_path('vocoder.pth', models_dir))['model_g'])
         self.vocoder.eval(inference=True)
 
         # Load models to GPU if available.
@@ -268,7 +268,7 @@ class TextToSpeech:
     def load_cvvp(self):
         """Load CVVP model."""
         self.cvvp = CVVP(model_dim=512, transformer_heads=8, dropout=0, mel_codes=8192, conditioning_enc_depth=8, cond_mask_percentage=0,
-                         speech_enc_depth=8, speech_mask_percentage=0, latent_multiplier=1).cpu().eval()
+                         speech_enc_depth=8, speech_mask_percentage=0, latent_multiplier=1).eval()
         self.cvvp.load_state_dict(torch.load(get_model_path('cvvp.pth', self.models_dir)))
 
     def get_conditioning_latents(self, voice_samples, return_mels=False):
@@ -289,7 +289,6 @@ class TextToSpeech:
             auto_conds = torch.stack(auto_conds, dim=1)
             self.autoregressive = self.autoregressive.to(self.device)
             auto_latent = self.autoregressive.get_conditioning(auto_conds)
-            self.autoregressive = self.autoregressive.cpu()
 
             diffusion_conds = []
             for sample in voice_samples:
@@ -302,7 +301,6 @@ class TextToSpeech:
 
             self.diffusion = self.diffusion.to(self.device)
             diffusion_latent = self.diffusion.get_conditioning(diffusion_conds)
-            self.diffusion = self.diffusion.cpu()
 
         if return_mels:
             return auto_latent, diffusion_latent, auto_conds, diffusion_conds
@@ -467,8 +465,6 @@ class TextToSpeech:
                 clip_results = torch.cat(clip_results, dim=0)
                 samples = torch.cat(samples, dim=0)
                 best_results = samples[torch.topk(clip_results, k=k).indices]
-            if self.cvvp is not None:
-                self.cvvp = self.cvvp.cpu()
             del samples
 
             # The diffusion model actually wants the last hidden layer from the autoregressive model as conditioning
@@ -507,7 +503,7 @@ class TextToSpeech:
                                             speaking_rate=speaking_rate, temperature=diffusion_temperature,
                                             verbose=verbose)
                 wav = self.vocoder.inference(mel)
-                wav_candidates.append(wav.cpu())
+                wav_candidates.append(wav)
 
             def potentially_redact(clip, text):
                 if self.enable_redaction:
@@ -521,7 +517,7 @@ class TextToSpeech:
                 res = wav_candidates[0]
 
             if return_deterministic_state:
-                return res, (deterministic_seed, text, voice_samples, (auto_conditioning.cpu(), diffusion_conditioning.cpu()))
+                return res, (deterministic_seed, text, voice_samples, (auto_conditioning, diffusion_conditioning))
             else:
                 return res
     def deterministic_state(self, seed=None):
