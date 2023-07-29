@@ -247,9 +247,18 @@ class TextToSpeech:
         self.vocoder.load_state_dict(torch.load(get_model_path('vocoder.pth', models_dir), map_location=torch.device('cpu'))['model_g'])
         self.vocoder.eval(inference=True)
 
+        # Load models to GPU if available.
+        self.autoregressive = self.autoregressive.to(self.device)
+        self.clvp = self.clvp.to(self.device)
+        self.diffusion = self.diffusion.to(self.device)
+        self.vocoder = self.vocoder.to(self.device)
+
+
         # Random latent generators (RLGs) are loaded lazily.
         self.rlg_auto = None
         self.rlg_diffusion = None
+
+    # TODO remove
     @contextmanager
     def temporary_cuda(self, model):
         m = model.to(self.device)
@@ -411,10 +420,9 @@ class TextToSpeech:
             calm_token = 83  # This is the token for coding silence, which is fixed in place with "fix_autoregressive_output"
             if verbose:
                 print("Generating autoregressive samples..")
-            with self.temporary_cuda(self.autoregressive
-            ) as autoregressive, torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.half):
+            with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.half):
                 for b in tqdm(range(num_batches), disable=not verbose):
-                    codes = autoregressive.inference_speech(auto_conditioning, text_tokens,
+                    codes = self.autoregressive.inference_speech(auto_conditioning, text_tokens,
                                                                 do_sample=True,
                                                                 top_p=top_p,
                                                                 temperature=temperature,
@@ -428,7 +436,7 @@ class TextToSpeech:
                     samples.append(codes)
 
             clip_results = []
-            with self.temporary_cuda(self.clvp) as clvp, torch.autocast(
+            with torch.autocast(
                 device_type="cuda", dtype=torch.float16, enabled=self.half
             ):
                 if cvvp_amount > 0:
@@ -444,7 +452,7 @@ class TextToSpeech:
                     for i in range(batch.shape[0]):
                         batch[i] = fix_autoregressive_output(batch[i], stop_mel_token)
                     if cvvp_amount != 1:
-                        clvp_out = clvp(text_tokens.repeat(batch.shape[0], 1), batch, return_loss=False)
+                        clvp_out = self.clvp(text_tokens.repeat(batch.shape[0], 1), batch, return_loss=False)
                     if auto_conds is not None and cvvp_amount > 0:
                         cvvp_accumulator = 0
                         for cl in range(auto_conds.shape[1]):
@@ -466,12 +474,10 @@ class TextToSpeech:
             # The diffusion model actually wants the last hidden layer from the autoregressive model as conditioning
             # inputs. Re-produce those for the top results. This could be made more efficient by storing all of these
             # results, but will increase memory usage.
-            with self.temporary_cuda(
-                self.autoregressive
-            ) as autoregressive, torch.autocast(
+            with torch.autocast(
                 device_type="cuda", dtype=torch.float16, enabled=self.half
             ):
-                best_latents = autoregressive(auto_conditioning.repeat(k, 1), text_tokens.repeat(k, 1),
+                best_latents = self.autoregressive(auto_conditioning.repeat(k, 1), text_tokens.repeat(k, 1),
                                                 torch.tensor([text_tokens.shape[-1]], device=text_tokens.device), best_results,
                                                 torch.tensor([best_results.shape[-1]*self.autoregressive.mel_length_compression], device=text_tokens.device),
                                                 return_latent=True, clip_inputs=False)
@@ -482,29 +488,26 @@ class TextToSpeech:
             if verbose:
                 print("Transforming autoregressive outputs into audio..")
             wav_candidates = []
-            with self.temporary_cuda(self.diffusion) as diffusion, self.temporary_cuda(
-                self.vocoder
-            ) as vocoder:
-                for b in range(best_results.shape[0]):
-                    codes = best_results[b].unsqueeze(0)
-                    latents = best_latents[b].unsqueeze(0)
+            for b in range(best_results.shape[0]):
+                codes = best_results[b].unsqueeze(0)
+                latents = best_latents[b].unsqueeze(0)
 
-                    # Find the first occurrence of the "calm" token and trim the codes to that.
-                    ctokens = 0
-                    for k in range(codes.shape[-1]):
-                        if codes[0, k] == calm_token:
-                            ctokens += 1
-                        else:
-                            ctokens = 0
-                        if ctokens > 8:  # 8 tokens gives the diffusion model some "breathing room" to terminate speech.
-                            latents = latents[:, :k]
-                            break
+                # Find the first occurrence of the "calm" token and trim the codes to that.
+                ctokens = 0
+                for k in range(codes.shape[-1]):
+                    if codes[0, k] == calm_token:
+                        ctokens += 1
+                    else:
+                        ctokens = 0
+                    if ctokens > 8:  # 8 tokens gives the diffusion model some "breathing room" to terminate speech.
+                        latents = latents[:, :k]
+                        break
 
-                    mel = do_spectrogram_diffusion(diffusion, diffuser, latents, diffusion_conditioning,
-                                                speaking_rate=speaking_rate, temperature=diffusion_temperature, 
-                                                verbose=verbose)
-                    wav = vocoder.inference(mel)
-                    wav_candidates.append(wav.cpu())
+                mel = do_spectrogram_diffusion(self.diffusion, diffuser, latents, diffusion_conditioning,
+                                            speaking_rate=speaking_rate, temperature=diffusion_temperature,
+                                            verbose=verbose)
+                wav = self.vocoder.inference(mel)
+                wav_candidates.append(wav.cpu())
 
             def potentially_redact(clip, text):
                 if self.enable_redaction:
