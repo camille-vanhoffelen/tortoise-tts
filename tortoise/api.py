@@ -244,7 +244,7 @@ class TextToSpeech:
         self.cvvp = None # CVVP model is only loaded if used.
 
         self.vocoder = UnivNetGenerator()
-        self.vocoder.load_state_dict(torch.load(get_model_path('vocoder.pth', models_dir))['model_g'])
+        self.vocoder.load_state_dict(torch.load(get_model_path('vocoder.pth', models_dir), map_location=self.device)['model_g'])
         self.vocoder.eval(inference=True)
 
         # Load models to GPU if available.
